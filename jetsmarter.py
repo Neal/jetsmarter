@@ -1,4 +1,5 @@
 from Crypto.Cipher import AES
+from mixpanel import Mixpanel
 from datetime import datetime
 from time import sleep
 import pickledb
@@ -9,9 +10,10 @@ import json
 import os
 
 SLEEP_INTERVAL = float(os.getenv('JETSMARTER_INTERVAL', 300))
+JETSMARTER_DEVICE_ID = os.environ['JETSMARTER_DEVICE_ID']
 PUSHOVER_API_TOKEN = os.environ.get('PUSHOVER_API_TOKEN')
 PUSHOVER_USER_TOKEN = os.environ.get('PUSHOVER_USER_TOKEN')
-JETSMARTER_DEVICE_ID = os.environ['JETSMARTER_DEVICE_ID']
+MIXPANEL_TOKEN = os.environ.get('MIXPANEL_TOKEN')
 
 VALID_ICAO = ('K', 'M', 'T')
 
@@ -60,8 +62,24 @@ class JetSmarter(object):
 prettyDate = lambda d: datetime.strptime(d, '%Y-%m-%dT%H:%M:%S.%fZ').strftime('%a %d %b %H:%M')
 routeInfo = lambda l: '{} [{} - {}]'.format(l['extended_info']['info'], l['from'], l['to'])
 
+mp = Mixpanel(MIXPANEL_TOKEN)
 pushover = Pushover(PUSHOVER_API_TOKEN, PUSHOVER_USER_TOKEN)
 jetsmarter = JetSmarter(JETSMARTER_DEVICE_ID)
+
+def flatten(d):
+    def expand(key, value):
+        if isinstance(value, dict):
+            return [(key + '.' + k, v) for k, v in flatten(value).items()]
+        else:
+            return [(key, value)]
+    return dict([item for k, v in d.items() for item in expand(k, v)])
+
+def trackLeg(leg, title):
+    logger.debug('tracking leg (%s) for %s', leg['leg_id'], title)
+    try:
+        mp.track(leg['leg_id'], title, flatten(leg))
+    except Exception as e:
+        logger.debug(e)
 
 def notifyLegInfo(leg, title):
     flightTime = '{} for {}'.format(prettyDate(leg['departLocal']), leg['flightTime'])
@@ -108,17 +126,21 @@ def fetchEmptyLegs():
 
         if legId not in cachedLegs:
             notifyLegInfo(leg, 'New Empty Leg')
+            trackLeg(leg, 'New Empty Leg')
         else:
             cachedLegs.remove(legId)
             numCachedLegs += 1
             if db.get(legId) == 0 and seatsLeft > 0:
                 notifyLegInfo(leg, 'Empty Leg Seat Now Available')
+            if db.get(legId) != seatsLeft:
+                trackLeg(leg, 'Seats Left Update')
 
         db.set(legId, seatsLeft)
 
     for legId in cachedLegs:
         logger.debug('removing cached leg: %s', legId)
         db.rem(legId)
+        trackLeg(leg, 'Empty Leg Removed')
 
     db.dump()
 
