@@ -4,6 +4,7 @@ from time import sleep
 import pickledb
 import requests
 import logging
+import base64
 import json
 import os
 
@@ -45,7 +46,7 @@ class JetSmarter(object):
         return json['payload']
 
     def emptyLegs(self):
-        payload = self.payload().decode('base64')
+        payload = base64.b64decode(self.payload())
         key = self.deviceId[:16]
         iv = self.deviceId[-16:]
         encryptor = AES.new(key, AES.MODE_CBC, iv)
